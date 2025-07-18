@@ -1,8 +1,9 @@
+import path from 'node:path'
+import type { BunRequest } from 'bun'
 import { getBearerToken, validateJWT } from '../auth'
 import { respondWithJSON } from './json'
 import { getVideo, updateVideo } from '../db/videos'
 import type { ApiConfig } from '../config'
-import type { BunRequest } from 'bun'
 import { BadRequestError, NotFoundError, UserForbiddenError } from './errors'
 
 const MAX_UPLOAD_SIZE = 10 << 20
@@ -27,8 +28,9 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
     throw new BadRequestError('Thumbnail exceeded file size limit')
   }
   const imgArrayBuffer = await file.arrayBuffer()
-  const stringedImgBuffer = Buffer.from(imgArrayBuffer).toString('base64')
-  const dataUrl = `data:${file.type};base64,${stringedImgBuffer}`
+  const imgPath =
+    path.join(cfg.assetsRoot, videoId) + '.' + file.type.split('/')[1]
+  await Bun.write(imgPath, imgArrayBuffer)
 
   const video = getVideo(cfg.db, videoId)
   if (!video) {
@@ -39,7 +41,7 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
     throw new UserForbiddenError('Video not owned by this user')
   }
 
-  video.thumbnailURL = dataUrl
+  video.thumbnailURL = '/' + imgPath
   updateVideo(cfg.db, video)
 
   return respondWithJSON(200, video)
