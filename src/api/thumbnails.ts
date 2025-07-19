@@ -27,6 +27,9 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   if (file.size > MAX_UPLOAD_SIZE) {
     throw new BadRequestError('Thumbnail exceeded file size limit')
   }
+  if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
+    throw new BadRequestError('Unsupported mime type')
+  }
   const imgArrayBuffer = await file.arrayBuffer()
   const imgPath =
     path.join(cfg.assetsRoot, videoId) + '.' + file.type.split('/')[1]
