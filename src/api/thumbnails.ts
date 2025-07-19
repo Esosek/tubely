@@ -44,7 +44,7 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
     throw new UserForbiddenError('Video not owned by this user')
   }
 
-  video.thumbnailURL = '/' + imgPath
+  video.thumbnailURL = 'http://localhost:8091/' + imgPath
   updateVideo(cfg.db, video)
 
   return respondWithJSON(200, video)
