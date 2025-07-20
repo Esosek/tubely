@@ -5,6 +5,7 @@ import { respondWithJSON } from './json'
 import { getVideo, updateVideo } from '../db/videos'
 import type { ApiConfig } from '../config'
 import { BadRequestError, NotFoundError, UserForbiddenError } from './errors'
+import { randomBytes } from 'node:crypto'
 
 const MAX_UPLOAD_SIZE = 10 << 20
 
@@ -32,7 +33,9 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   }
   const imgArrayBuffer = await file.arrayBuffer()
   const imgPath =
-    path.join(cfg.assetsRoot, videoId) + '.' + file.type.split('/')[1]
+    path.join(cfg.assetsRoot, randomBytes(32).toString('base64url')) +
+    '.' +
+    file.type.split('/')[1]
   await Bun.write(imgPath, imgArrayBuffer)
 
   const video = getVideo(cfg.db, videoId)
