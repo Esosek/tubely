@@ -31,12 +31,6 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
     throw new BadRequestError('Unsupported mime type')
   }
-  const imgArrayBuffer = await file.arrayBuffer()
-  const imgPath =
-    path.join(cfg.assetsRoot, randomBytes(32).toString('base64url')) +
-    '.' +
-    file.type.split('/')[1]
-  await Bun.write(imgPath, imgArrayBuffer)
 
   const video = getVideo(cfg.db, videoId)
   if (!video) {
@@ -46,6 +40,10 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   if (userID !== video.userID) {
     throw new UserForbiddenError('Video not owned by this user')
   }
+
+  const imgArrayBuffer = await file.arrayBuffer()
+  const imgPath = path.join(cfg.assetsRoot, randomBytes(32).toString('base64url')) + '.' + file.type.split('/')[1]
+  await Bun.write(imgPath, imgArrayBuffer)
 
   video.thumbnailURL = 'http://localhost:8091/' + imgPath
   updateVideo(cfg.db, video)
