@@ -6,9 +6,10 @@ import { type ApiConfig } from '../config'
 import { respondWithJSON } from './json'
 import { BadRequestError, NotFoundError, UserForbiddenError } from './errors'
 import { getBearerToken, validateJWT } from '../auth'
-import { getVideo, updateVideo } from '../db/videos'
+import { getVideo, updateVideo, type Video } from '../db/videos'
 
 const MAX_UPLOAD_SIZE = 1 << 30
+const SIGNED_URL_EXPIRATION = 60 * 5 // 5 mins
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const { videoId } = req.params as { videoId?: string }
@@ -45,28 +46,26 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   }
 
   const videoArrayBuffer = await file.arrayBuffer()
-  const videoFileName =
-    randomBytes(32).toString('base64url') + '.' + file.type.split('/')[1]
-  let videoPath = path.join(cfg.assetsRoot, videoFileName)
+  const fileId = randomBytes(32).toString('base64url')
+  const tempPath = path.join(cfg.assetsRoot, fileId + '.mp4')
   // Store temporary file on disk
-  await Bun.write(videoPath, videoArrayBuffer)
+  await Bun.write(tempPath, videoArrayBuffer)
 
-  const processedFilePath = await processVideoForFastStart(videoPath)
-  const aspectRatio = await getVideoAspectRatio(videoPath)
-  const videoFile = Bun.file(processedFilePath)
-  const s3BucketFilePath = path.join(aspectRatio, videoFileName)
+  const processedTempPath = await processVideoForFastStart(tempPath)
+  const aspectRatio = await getVideoAspectRatio(tempPath)
+  const videoFile = Bun.file(processedTempPath)
+  video.videoURL = path.join(aspectRatio, fileId + '.mp4')
 
-  await S3Client.file(s3BucketFilePath, {
+  await S3Client.file(video.videoURL, {
     type: 'video/mp4',
   }).write(videoFile)
-  video.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${s3BucketFilePath}`
   updateVideo(cfg.db, video)
 
   // Delete the temp file
-  await Bun.file(videoPath).delete()
-  await Bun.file(processedFilePath).delete()
+  await Bun.file(tempPath).delete()
+  await Bun.file(processedTempPath).delete()
 
-  return respondWithJSON(200, null)
+  return respondWithJSON(200, dbVideoToSignedVideo(cfg, video))
 }
 
 async function getVideoAspectRatio(filePath: string) {
@@ -176,4 +175,19 @@ function appendProcessedSuffix(filePath: string) {
   const extension = filePath.substring(lastDotIndex)
 
   return `${base}.processed${extension}`
+}
+
+function generatePresignedURL(cfg: ApiConfig, key: string, expireTime: number) {
+  return cfg.s3Client.presign(key, { expiresIn: expireTime })
+}
+
+export function dbVideoToSignedVideo(cfg: ApiConfig, video: Video) {
+  if (video.videoURL) {
+    video.videoURL = generatePresignedURL(
+      cfg,
+      video.videoURL,
+      SIGNED_URL_EXPIRATION
+    )
+  }
+  return video
 }
