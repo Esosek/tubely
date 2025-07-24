@@ -45,28 +45,44 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   }
 
   const videoArrayBuffer = await file.arrayBuffer()
-  let videoFileName = randomBytes(32).toString('base64url') + '.' + file.type.split('/')[1]
-  const videoPath = path.join(cfg.assetsRoot, videoFileName)
+  const videoFileName =
+    randomBytes(32).toString('base64url') + '.' + file.type.split('/')[1]
+  let videoPath = path.join(cfg.assetsRoot, videoFileName)
   // Store temporary file on disk
   await Bun.write(videoPath, videoArrayBuffer)
-  const videoFile = Bun.file(videoPath)
 
+  const processedFilePath = await processVideoForFastStart(videoPath)
   const aspectRatio = await getVideoAspectRatio(videoPath)
-  videoFileName = aspectRatio + '/' + videoFileName
+  const videoFile = Bun.file(processedFilePath)
+  const s3BucketFilePath = path.join(aspectRatio, videoFileName)
 
-  await S3Client.file(videoFileName, { type: 'video/mp4' }).write(videoFile)
-  video.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${videoFileName}`
+  await S3Client.file(s3BucketFilePath, {
+    type: 'video/mp4',
+  }).write(videoFile)
+  video.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${s3BucketFilePath}`
   updateVideo(cfg.db, video)
 
   // Delete the temp file
   await Bun.file(videoPath).delete()
+  await Bun.file(processedFilePath).delete()
 
   return respondWithJSON(200, null)
 }
 
 async function getVideoAspectRatio(filePath: string) {
   const subprocess = Bun.spawn({
-    cmd: ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'json', filePath],
+    cmd: [
+      'ffprobe',
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=width,height',
+      '-of',
+      'json',
+      filePath,
+    ],
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -103,8 +119,37 @@ async function getVideoAspectRatio(filePath: string) {
     }
   } catch (error) {
     console.error('Error parsing ffprobe output:', error)
-    return null
+    return 'other'
   }
+}
+
+async function processVideoForFastStart(inputFilePath: string) {
+  const outputFilePath = appendProcessedSuffix(inputFilePath)
+  const subprocess = Bun.spawn({
+    cmd: [
+      'ffmpeg',
+      '-i',
+      inputFilePath,
+      '-movflags',
+      'faststart',
+      '-map_metadata',
+      '0',
+      '-codec',
+      'copy',
+      '-f',
+      'mp4',
+      outputFilePath,
+    ],
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+
+  const exitCode = await subprocess.exited
+  if (exitCode !== 0) {
+    console.log(`ffmpeg exited with status ${exitCode}`)
+    return inputFilePath
+  }
+  return outputFilePath
 }
 
 async function readableStreamToText(readableStream: ReadableStream) {
@@ -120,6 +165,15 @@ async function readableStreamToText(readableStream: ReadableStream) {
   return text
 }
 
-function processVideoForFastStart(inputFilePath: string) {
-  // TODO: Implement processing video for fast start
+function appendProcessedSuffix(filePath: string) {
+  const lastDotIndex = filePath.lastIndexOf('.')
+
+  if (lastDotIndex === -1) {
+    return `${filePath}.processed`
+  }
+
+  const base = filePath.substring(0, lastDotIndex)
+  const extension = filePath.substring(lastDotIndex)
+
+  return `${base}.processed${extension}`
 }
