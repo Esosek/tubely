@@ -9,7 +9,6 @@ import { getBearerToken, validateJWT } from '../auth'
 import { getVideo, updateVideo, type Video } from '../db/videos'
 
 const MAX_UPLOAD_SIZE = 1 << 30
-const SIGNED_URL_EXPIRATION = 60 * 5 // 5 mins
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const { videoId } = req.params as { videoId?: string }
@@ -54,9 +53,10 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const processedTempPath = await processVideoForFastStart(tempPath)
   const aspectRatio = await getVideoAspectRatio(tempPath)
   const videoFile = Bun.file(processedTempPath)
-  video.videoURL = path.join(aspectRatio, fileId + '.mp4')
+  const videoKey = path.join(aspectRatio, fileId + '.mp4')
+  video.videoURL = `${cfg.s3CfDistribution}/${videoKey}`
 
-  await S3Client.file(video.videoURL, {
+  await S3Client.file(videoKey, {
     type: 'video/mp4',
   }).write(videoFile)
   updateVideo(cfg.db, video)
@@ -65,7 +65,7 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   await Bun.file(tempPath).delete()
   await Bun.file(processedTempPath).delete()
 
-  return respondWithJSON(200, dbVideoToSignedVideo(cfg, video))
+  return respondWithJSON(200, video)
 }
 
 async function getVideoAspectRatio(filePath: string) {
@@ -175,19 +175,4 @@ function appendProcessedSuffix(filePath: string) {
   const extension = filePath.substring(lastDotIndex)
 
   return `${base}.processed${extension}`
-}
-
-function generatePresignedURL(cfg: ApiConfig, key: string, expireTime: number) {
-  return cfg.s3Client.presign(key, { expiresIn: expireTime })
-}
-
-export function dbVideoToSignedVideo(cfg: ApiConfig, video: Video) {
-  if (video.videoURL) {
-    video.videoURL = generatePresignedURL(
-      cfg,
-      video.videoURL,
-      SIGNED_URL_EXPIRATION
-    )
-  }
-  return video
 }
